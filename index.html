@@ -386,6 +386,679 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   let totalPages = 0;
   let voices     = [];
   let pdfDoc     = null;
+  let useElevenLabs = true;
+  let elAudio    = null;
+
+  const $ = id => document.getElementById(id);
+  const dropZone    = $('dropZone');
+  const fileInput   = $('fileInput');
+  const rangeBar    = $('rangeBar');
+  const pageStart   = $('pageStart');
+  const pageEnd     = $('pageEnd');
+  const pageInfo    = $('pageInfo');
+  const btnLoad     = $('btnLoad');
+  const textContent = $('textContent');
+  const paraCounter = $('paraCounter');
+  const statusPill  = $('statusPill');
+  const emptyCtrl   = $('emptyControls');
+  const activeCtrl  = $('activeControls');
+  const voiceSelect = $('voiceSelect');
+  const rateSlider  = $('rateSlider');
+  const volSlider   = $('volSlider');
+  const rateVal     = $('rateVal');
+  const volVal      = $('volVal');
+  const btnPlay     = $('btnPlay');
+  const btnStop     = $('btnStop');
+  const progressFill= $('progressFill');
+  const progressTxt = $('progressTxt');
+  const btnEngineEl = $('btnEngineEl');
+  const btnEngineBr = $('btnEngineBr');
+  const elConfig    = $('elConfig');
+  const brConfig    = $('brConfig');
+  const elKey       = $('elKey');
+  const elVoiceId   = $('elVoiceId');
+  const elCredits   = $('elCredits');
+
+  // ENGINE TOGGLE
+  btnEngineEl.addEventListener('click', () => {
+    useElevenLabs = true;
+    btnEngineEl.classList.add('active');
+    btnEngineBr.classList.remove('active');
+    elConfig.style.display = '';
+    brConfig.style.display = 'none';
+  });
+  btnEngineBr.addEventListener('click', () => {
+    useElevenLabs = false;
+    btnEngineBr.classList.add('active');
+    btnEngineEl.classList.remove('active');
+    brConfig.style.display = '';
+    elConfig.style.display = 'none';
+  });
+
+  // DRAG & DROP
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') loadPDF(f);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadPDF(fileInput.files[0]); });
+
+  async function loadPDF(file) {
+    const buf = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+    totalPages = pdfDoc.numPages;
+    pageEnd.value = totalPages;
+    pageEnd.max   = totalPages;
+    pageStart.max = totalPages;
+    pageInfo.textContent = totalPages + ' páginas no total';
+    dropZone.style.display = 'none';
+    rangeBar.style.display = 'flex';
+    setStatus('PDF carregado', false);
+    await extractText();
+  }
+
+  btnLoad.addEventListener('click', extractText);
+
+  function cleanText(raw) {
+    return raw
+      .replace(/[_\-.]{3,}/g, ' ')
+      .replace(/_{1,}\s*_*/g, ' ')
+      .replace(/\s{2,}\d{1,3}\s{2,}/g, ' ')
+      .replace(/\s+-\s+/g, ' ')
+      .replace(/(\s*-\s*){3,}/g, ' ')
+      .replace(/[\x00-\x1F\x7F]/g, ' ')
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  function rankVoice(v) {
+    const n = v.name.toLowerCase();
+    if (n.includes('francisca') || n.includes('antonio')) return 0;
+    if (n.includes('google') && v.lang.startsWith('pt'))   return 1;
+    if (n.includes('luciana') || n.includes('felipe'))     return 2;
+    if (v.lang === 'pt-BR')  return 3;
+    if (v.lang.startsWith('pt')) return 4;
+    return 99;
+  }
+
+  async function extractText() {
+    const s = Math.max(1, parseInt(pageStart.value) || 1);
+    const e = Math.min(totalPages, parseInt(pageEnd.value) || totalPages);
+    pageStart.value = s; pageEnd.value = e;
+    textContent.innerHTML = '';
+    paragraphs = []; currentIdx = -1;
+    stopSpeech(false);
+    setStatus('Extraindo texto...', false);
+
+    for (let p = s; p <= e; p++) {
+      const page    = await pdfDoc.getPage(p);
+      const content = await page.getTextContent();
+      const raw     = content.items.map(i => i.str).join(' ');
+      raw.split(/\s{4,}/).map(t => cleanText(t)).filter(t => t.length > 50)
+         .forEach(t => paragraphs.push(t));
+    }
+
+    if (paragraphs.length === 0) {
+      textContent.innerHTML = '<p style="color:var(--ink-xsoft);font-style:italic;padding:1rem;">Nenhum texto encontrado neste intervalo.</p>';
+      setStatus('Sem texto', false); return;
+    }
+
+    paragraphs.forEach((txt, i) => {
+      const div = document.createElement('div');
+      div.className = 'para-item';
+      div.dataset.idx = i;
+      div.style.animationDelay = Math.min(i * 0.025, 0.5) + 's';
+      div.innerHTML = '<span class="para-num">' + (i+1) + '</span>' + txt;
+      div.addEventListener('click', () => readFrom(i));
+      textContent.appendChild(div);
+    });
+
+    paraCounter.textContent = paragraphs.length + ' parágrafos';
+    emptyCtrl.style.display = 'none';
+    activeCtrl.style.display = 'flex';
+    updateProgress();
+    setStatus('Pronto para ler', false);
+    populateVoices();
+  }
+
+  function populateVoices() {
+    voices = speechSynthesis.getVoices();
+    const ptVoices = voices.filter(v => v.lang.startsWith('pt'));
+    const list = (ptVoices.length > 0 ? ptVoices : voices)
+                   .slice().sort((a, b) => rankVoice(a) - rankVoice(b));
+    voiceSelect.innerHTML = '';
+    list.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = v.name + ' (' + v.lang + ')' + (rankVoice(v) <= 2 ? ' ⭐' : '');
+      voiceSelect.appendChild(o);
+    });
+    if (list.length > 0) voiceSelect.value = list[0].name;
+  }
+  speechSynthesis.onvoiceschanged = populateVoices;
+
+  const pitchSlider = $('pitchSlider');
+  const pitchVal    = $('pitchVal');
+  rateSlider.addEventListener('input',  () => { rateVal.textContent  = parseFloat(rateSlider.value).toFixed(1) + 'x'; });
+  pitchSlider.addEventListener('input', () => { pitchVal.textContent = parseFloat(pitchSlider.value).toFixed(1); });
+  volSlider.addEventListener('input',   () => { volVal.textContent   = Math.round(volSlider.value * 100) + '%'; });
+
+  btnPlay.addEventListener('click', () => {
+    if (!paragraphs.length) return;
+    if (isPlaying && !isPaused) {
+      if (useElevenLabs && elAudio) { elAudio.pause(); }
+      else { speechSynthesis.pause(); }
+      isPaused = true;
+      btnPlay.textContent = 'Continuar'; setStatus('Pausado', false);
+    } else if (isPaused) {
+      if (useElevenLabs && elAudio) { elAudio.play(); }
+      else { speechSynthesis.resume(); }
+      isPaused = false;
+      btnPlay.textContent = 'Pausar'; setStatus('Lendo...', true);
+    } else {
+      readFrom(currentIdx < 0 ? 0 : currentIdx);
+    }
+  });
+  btnStop.addEventListener('click', () => stopSpeech(true));
+
+  function readFrom(idx) {
+    stopSpeech(false);
+    currentIdx = idx; isPlaying = true; isPaused = false;
+    btnPlay.textContent = 'Pausar';
+    btnStop.disabled = false;
+    setStatus('Lendo...', true);
+    speakNext(idx);
+  }
+
+  async function speakElevenLabs(idx) {
+    if (idx >= paragraphs.length || !isPlaying) { finishReading(); return; }
+    currentIdx = idx;
+    highlightParagraph(idx);
+    updateProgress();
+
+    const apiKey  = elKey.value.trim();
+    const voiceId = elVoiceId.value.trim();
+    if (!apiKey || !voiceId) { fallbackBrowser(idx); return; }
+
+    setStatus('Gerando voz...', true);
+    try {
+      const res = await fetch('https://api.elevenlabs.io/v1/text-to-speech/' + voiceId + '/stream', {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: paragraphs[idx],
+          model_id: 'eleven_multilingual_v2',
+          voice_settings: { stability: 0.45, similarity_boost: 0.80, style: 0.30, use_speaker_boost: true }
+        })
+      });
+
+      if (!res.ok) {
+        elCredits.textContent = 'Creditos esgotados - usando voz do navegador';
+        fallbackBrowser(idx); return;
+      }
+
+      elCredits.textContent = '';
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      elAudio = new Audio(url);
+      elAudio.volume = parseFloat(volSlider.value);
+      elAudio.playbackRate = parseFloat(rateSlider.value);
+      setStatus('Lendo...', true);
+      elAudio.play();
+      elAudio.onended = () => { URL.revokeObjectURL(url); if (isPlaying && !isPaused) speakElevenLabs(idx + 1); };
+      elAudio.onerror = () => { URL.revokeObjectURL(url); if (isPlaying) speakElevenLabs(idx + 1); };
+    } catch (err) {
+      elCredits.textContent = 'Erro de conexao - usando voz do navegador';
+      fallbackBrowser(idx);
+    }
+  }
+
+  function fallbackBrowser(idx) {
+    if (idx >= paragraphs.length || !isPlaying) { finishReading(); return; }
+    currentIdx = idx;
+    highlightParagraph(idx);
+    updateProgress();
+    const utt   = new SpeechSynthesisUtterance(paragraphs[idx]);
+    utt.rate    = parseFloat(rateSlider.value);
+    utt.pitch   = parseFloat(pitchSlider.value);
+    utt.volume  = parseFloat(volSlider.value);
+    utt.lang    = 'pt-BR';
+    const voice = voices.find(v => v.name === voiceSelect.value);
+    if (voice) utt.voice = voice;
+    utt.onend   = () => { if (isPlaying && !isPaused) fallbackBrowser(idx + 1); };
+    utt.onerror = e => { if (e.error !== 'interrupted') fallbackBrowser(idx + 1); };
+    speechSynthesis.speak(utt);
+  }
+
+  function speakNext(idx) {
+    if (useElevenLabs) speakElevenLabs(idx);
+    else fallbackBrowser(idx);
+  }
+
+  function stopSpeech(reset) {
+    if (elAudio) { elAudio.pause(); elAudio.src = ''; elAudio = null; }
+    speechSynthesis.cancel();
+    isPlaying = false; isPaused = false;
+    btnPlay.textContent = 'Play';
+    btnStop.disabled = true;
+    setStatus(paragraphs.length > 0 ? 'Pronto para ler' : 'Aguardando PDF', false);
+    if (reset) { clearHighlights(); currentIdx = -1; updateProgress(); }
+  }
+
+  function finishReading() {
+    isPlaying = false; isPaused = false;
+    btnPlay.textContent = 'Play'; btnStop.disabled = true;
+    setStatus('Leitura concluida', false);
+    currentIdx = -1; updateProgress();
+  }
+
+  function highlightParagraph(idx) {
+    document.querySelectorAll('.para-item').forEach((el, i) => {
+      el.classList.remove('active');
+      i < idx ? el.classList.add('done') : el.classList.remove('done');
+    });
+    const active = document.querySelector('.para-item[data-idx="' + idx + '"]');
+    if (active) { active.classList.add('active'); active.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+
+  function clearHighlights() {
+    document.querySelectorAll('.para-item').forEach(el => el.classList.remove('active','done'));
+  }
+
+  function updateProgress() {
+    const total = paragraphs.length;
+    const cur   = currentIdx < 0 ? 0 : currentIdx + 1;
+    progressTxt.textContent  = cur + ' / ' + total;
+    progressFill.style.width = total > 0 ? ((cur/total)*100) + '%' : '0%';
+  }
+
+  function setStatus(text, reading) {
+    statusPill.textContent = text;
+    statusPill.className   = 'status-pill' + (reading ? ' reading' : '');
+  }
+</script>
+<style>
+:root {
+  --bg: #f4f1ec;
+  --surface: #ffffff;
+  --surface2: #faf8f5;
+  --ink: #1c1917;
+  --ink-soft: #78716c;
+  --ink-xsoft: #a8a29e;
+  --accent: #16603a;
+  --accent-light: #dcf0e6;
+  --accent-glow: rgba(22,96,58,0.15);
+  --border: #e7e2da;
+  --radius: 12px;
+  --shadow: 0 2px 20px rgba(0,0,0,0.06);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: rgba(244,241,236,0.92);
+  backdrop-filter: blur(10px);
+  position: sticky; top: 0; z-index: 50;
+}
+.logo { font-family: 'Lora', serif; font-size: 1.5rem; color: var(--ink); }
+.logo span { color: var(--accent); }
+.status-pill {
+  font-size: 0.78rem; font-weight: 500;
+  padding: 0.3rem 0.8rem; border-radius: 99px;
+  background: var(--accent-light); color: var(--accent);
+  transition: all 0.3s;
+}
+.status-pill.reading {
+  background: var(--accent); color: #fff;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
+
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 2rem;
+  align-items: start;
+}
+.left-col { display: flex; flex-direction: column; gap: 1.2rem; }
+
+/* DROP ZONE */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 2.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  background: var(--surface);
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+.drop-icon { font-size: 2.5rem; margin-bottom: 0.8rem; }
+.drop-zone h2 { font-family: 'Lora', serif; font-size: 1.25rem; margin-bottom: 0.4rem; }
+.drop-zone p { font-size: 0.9rem; color: var(--ink-soft); font-weight: 300; }
+.drop-zone input { display: none; }
+.drop-btn {
+  display: inline-block; margin-top: 1rem;
+  background: var(--accent); color: #fff;
+  padding: 0.6rem 1.5rem; border-radius: 8px;
+  font-size: 0.9rem; font-weight: 500; cursor: pointer;
+  transition: background 0.2s; border: none; font-family: inherit;
+}
+.drop-btn:hover { background: #0f4a2c; }
+
+/* RANGE BAR */
+.range-bar {
+  display: none;
+  align-items: center;
+  gap: 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.8rem 1.2rem;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+.range-bar label { color: var(--ink-soft); }
+.range-input {
+  width: 68px; padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 0.88rem;
+  background: var(--bg); color: var(--ink); text-align: center;
+}
+.range-input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.page-info { color: var(--ink-xsoft); margin-left: auto; font-size: 0.82rem; }
+.btn-load {
+  padding: 0.4rem 1rem; background: var(--accent); color: #fff;
+  border: none; border-radius: 7px; font-family: inherit;
+  font-size: 0.85rem; font-weight: 500; cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-load:hover { background: #0f4a2c; }
+
+/* TEXT PANEL */
+.text-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 500px;
+  max-height: 70vh;
+}
+.panel-header {
+  padding: 0.9rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; font-weight: 500;
+  color: var(--ink-soft); letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.para-counter {
+  font-size: 0.75rem; background: var(--bg);
+  padding: 0.2rem 0.6rem; border-radius: 99px; color: var(--ink-soft);
+}
+.text-content {
+  flex: 1; padding: 1.2rem; overflow-y: auto; scroll-behavior: smooth;
+}
+.text-content:empty::before {
+  content: 'O texto do PDF aparecerá aqui após o carregamento.';
+  color: var(--ink-xsoft); font-size: 0.92rem; font-style: italic;
+}
+.text-content::-webkit-scrollbar { width: 5px; }
+.text-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+/* PARAGRAPHS */
+.para-item {
+  font-family: 'Lora', serif;
+  font-size: 0.97rem; line-height: 1.85;
+  color: var(--ink-soft);
+  padding: 0.85rem 1rem;
+  border-radius: 8px; margin-bottom: 0.4rem;
+  cursor: pointer;
+  transition: all 0.25s;
+  border-left: 3px solid transparent;
+  position: relative;
+  animation: fadeIn 0.3s ease both;
+}
+.para-item:hover { background: var(--surface2); color: var(--ink); }
+.para-item.active {
+  background: #fefce8;
+  border-left-color: var(--accent);
+  color: var(--ink);
+  box-shadow: 0 2px 12px rgba(254,240,138,0.35);
+}
+.para-item.done { color: var(--ink-xsoft); opacity: 0.6; }
+.para-num {
+  position: absolute; top: 0.85rem; right: 0.7rem;
+  font-size: 0.68rem; font-family: 'Outfit', sans-serif;
+  color: var(--ink-xsoft);
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* CONTROLS PANEL */
+.controls-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.4rem;
+  display: flex; flex-direction: column; gap: 1.3rem;
+  position: sticky; top: 80px;
+}
+.ctrl-title {
+  font-size: 0.78rem; font-weight: 500;
+  color: var(--ink-soft); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.empty-controls {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 0.6rem; padding: 2.5rem 0;
+  color: var(--ink-xsoft); text-align: center;
+}
+.empty-controls .big-icon { font-size: 2.5rem; }
+.empty-controls p { font-size: 0.85rem; font-weight: 300; }
+
+/* voice select */
+.voice-select {
+  width: 100%; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-family: 'Outfit', sans-serif; font-size: 0.85rem;
+  background: var(--bg); color: var(--ink); cursor: pointer;
+}
+.voice-select:focus { outline: 2px solid var(--accent); border-color: transparent; }
+
+/* sliders */
+.slider-group { display: flex; flex-direction: column; gap: 0.4rem; }
+.slider-label {
+  display: flex; justify-content: space-between;
+  font-size: 0.83rem; color: var(--ink-soft);
+}
+.slider-label span { font-weight: 500; color: var(--accent); min-width: 2.8rem; text-align: right; }
+input[type=range] {
+  width: 100%; -webkit-appearance: none;
+  height: 4px; border-radius: 4px;
+  background: var(--border); outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 17px; height: 17px;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 2px 6px var(--accent-glow);
+  transition: transform 0.15s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+/* buttons */
+.playback { display: flex; gap: 0.7rem; }
+.btn-play, .btn-stop {
+  flex: 1; padding: 0.85rem; border: none; border-radius: 10px;
+  font-family: 'Outfit', sans-serif; font-size: 0.92rem; font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+}
+.btn-play {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.btn-play:hover { background: #0f4a2c; transform: translateY(-1px); }
+.btn-play:disabled { background: var(--ink-xsoft); cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-stop { background: var(--bg); color: var(--ink); border: 1px solid var(--border); }
+.btn-stop:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+.btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* progress */
+.progress-wrap {
+  background: var(--bg); border-radius: 10px;
+  padding: 0.9rem 1rem; border: 1px solid var(--border);
+}
+.progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 0.8rem; color: var(--ink-soft); margin-bottom: 0.5rem;
+}
+.progress-bar-bg {
+  height: 5px; background: var(--border);
+  border-radius: 99px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; background: var(--accent);
+  border-radius: 99px; width: 0%;
+  transition: width 0.4s ease;
+}
+
+@media (max-width: 768px) {
+  main { grid-template-columns: 1fr; padding: 1rem; }
+  .controls-panel { position: static; order: -1; }
+  .text-panel { max-height: 55vh; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Leitur<span>AI</span></div>
+  <div class="status-pill" id="statusPill">Aguardando PDF</div>
+</header>
+
+<main>
+  <div class="left-col">
+
+    <!-- DROP ZONE -->
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".pdf"/>
+      <div class="drop-icon">📄</div>
+      <h2>Arraste seu PDF aqui</h2>
+      <p>ou clique para selecionar o arquivo</p>
+      <label for="fileInput" class="drop-btn">Selecionar PDF</label>
+    </div>
+
+    <!-- RANGE BAR -->
+    <div class="range-bar" id="rangeBar">
+      <label>Páginas: de</label>
+      <input type="number" class="range-input" id="pageStart" min="1" value="1"/>
+      <label>até</label>
+      <input type="number" class="range-input" id="pageEnd" min="1"/>
+      <button class="btn-load" id="btnLoad">Carregar</button>
+      <span class="page-info" id="pageInfo"></span>
+    </div>
+
+    <!-- TEXT PANEL -->
+    <div class="text-panel">
+      <div class="panel-header">
+        Texto do documento
+        <span class="para-counter" id="paraCounter">— parágrafos</span>
+      </div>
+      <div class="text-content" id="textContent"></div>
+    </div>
+
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="controls-panel">
+    <div class="ctrl-title">Controles de leitura</div>
+
+    <div id="emptyControls" class="empty-controls">
+      <div class="big-icon">🎧</div>
+      <p>Carregue um PDF para<br>começar a ouvir</p>
+    </div>
+
+    <div id="activeControls" style="display:none; flex-direction:column; gap:1.3rem;">
+
+      <div class="slider-group">
+        <div class="slider-label">Voz pt-BR</div>
+        <select class="voice-select" id="voiceSelect"></select>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Velocidade <span id="rateVal">0.9×</span></div>
+        <input type="range" id="rateSlider" min="0.5" max="2" step="0.05" value="0.9"/>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Tom (pitch) <span id="pitchVal">1.0</span></div>
+        <input type="range" id="pitchSlider" min="0.5" max="2" step="0.1" value="1.0"/>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Volume <span id="volVal">100%</span></div>
+        <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1"/>
+      </div>
+
+      <div class="playback">
+        <button class="btn-play" id="btnPlay">▶ Play</button>
+        <button class="btn-stop" id="btnStop" disabled>■ Stop</button>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span>Progresso</span>
+          <span id="progressTxt">0 / 0</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  let paragraphs = [];
+  let currentIdx = -1;
+  let isPlaying  = false;
+  let isPaused   = false;
+  let totalPages = 0;
+  let voices     = [];
+  let pdfDoc     = null;
 
   const $ = id => document.getElementById(id);
   const dropZone    = $('dropZone');
