@@ -1,87 +1,578 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>LeiturAI</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+:root {
+  --bg: #f4f1ec;
+  --surface: #ffffff;
+  --surface2: #faf8f5;
+  --ink: #1c1917;
+  --ink-soft: #78716c;
+  --ink-xsoft: #a8a29e;
+  --accent: #16603a;
+  --accent-light: #dcf0e6;
+  --accent-glow: rgba(22,96,58,0.15);
+  --border: #e7e2da;
+  --radius: 12px;
+  --shadow: 0 2px 20px rgba(0,0,0,0.06);
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  font-family: 'Outfit', sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+header {
+  padding: 1rem 2rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border);
+  background: rgba(244,241,236,0.92);
+  backdrop-filter: blur(10px);
+  position: sticky; top: 0; z-index: 50;
+}
+.logo { font-family: 'Lora', serif; font-size: 1.5rem; color: var(--ink); }
+.logo span { color: var(--accent); }
+.status-pill {
+  font-size: 0.78rem; font-weight: 500;
+  padding: 0.3rem 0.8rem; border-radius: 99px;
+  background: var(--accent-light); color: var(--accent);
+  transition: all 0.3s;
+}
+.status-pill.reading {
+  background: var(--accent); color: #fff;
+  animation: pulse 1.5s infinite;
+}
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.7} }
 
-#file reader
-import pyttsx3
-import fitz 
-import sys
-from PyQt5.QtWidgets import QApplication, QWidget, QPushButton, QFileDialog, QVBoxLayout, QLabel, QHBoxLayout, QLineEdit
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QIcon
+main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 360px;
+  gap: 1.5rem;
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 2rem;
+  align-items: start;
+}
+.left-col { display: flex; flex-direction: column; gap: 1.2rem; }
 
-class Reader(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.initUI()
+/* DROP ZONE */
+.drop-zone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 2.5rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  background: var(--surface);
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--accent);
+  background: var(--surface2);
+}
+.drop-icon { font-size: 2.5rem; margin-bottom: 0.8rem; }
+.drop-zone h2 { font-family: 'Lora', serif; font-size: 1.25rem; margin-bottom: 0.4rem; }
+.drop-zone p { font-size: 0.9rem; color: var(--ink-soft); font-weight: 300; }
+.drop-zone input { display: none; }
+.drop-btn {
+  display: inline-block; margin-top: 1rem;
+  background: var(--accent); color: #fff;
+  padding: 0.6rem 1.5rem; border-radius: 8px;
+  font-size: 0.9rem; font-weight: 500; cursor: pointer;
+  transition: background 0.2s; border: none; font-family: inherit;
+}
+.drop-btn:hover { background: #0f4a2c; }
 
-    def initUI(self):
-        self.layout = QVBoxLayout()
+/* RANGE BAR */
+.range-bar {
+  display: none;
+  align-items: center;
+  gap: 0.8rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.8rem 1.2rem;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+.range-bar label { color: var(--ink-soft); }
+.range-input {
+  width: 68px; padding: 0.3rem 0.5rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  font-family: inherit; font-size: 0.88rem;
+  background: var(--bg); color: var(--ink); text-align: center;
+}
+.range-input:focus { outline: 2px solid var(--accent); border-color: transparent; }
+.page-info { color: var(--ink-xsoft); margin-left: auto; font-size: 0.82rem; }
+.btn-load {
+  padding: 0.4rem 1rem; background: var(--accent); color: #fff;
+  border: none; border-radius: 7px; font-family: inherit;
+  font-size: 0.85rem; font-weight: 500; cursor: pointer;
+  transition: background 0.2s;
+}
+.btn-load:hover { background: #0f4a2c; }
 
-        self.label = QLabel("No file selected", self)
-        self.label.setStyleSheet("font-size: 16px; color: #e0e5ec; text-align: center;")
-        self.label.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(self.label)
+/* TEXT PANEL */
+.text-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 500px;
+  max-height: 70vh;
+}
+.panel-header {
+  padding: 0.9rem 1.4rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem; font-weight: 500;
+  color: var(--ink-soft); letter-spacing: 0.06em;
+  text-transform: uppercase;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.para-counter {
+  font-size: 0.75rem; background: var(--bg);
+  padding: 0.2rem 0.6rem; border-radius: 99px; color: var(--ink-soft);
+}
+.text-content {
+  flex: 1; padding: 1.2rem; overflow-y: auto; scroll-behavior: smooth;
+}
+.text-content:empty::before {
+  content: 'O texto do PDF aparecerá aqui após o carregamento.';
+  color: var(--ink-xsoft); font-size: 0.92rem; font-style: italic;
+}
+.text-content::-webkit-scrollbar { width: 5px; }
+.text-content::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
 
-        self.layout2 = QHBoxLayout()
-        self.layout.addLayout(self.layout2)
+/* PARAGRAPHS */
+.para-item {
+  font-family: 'Lora', serif;
+  font-size: 0.97rem; line-height: 1.85;
+  color: var(--ink-soft);
+  padding: 0.85rem 1rem;
+  border-radius: 8px; margin-bottom: 0.4rem;
+  cursor: pointer;
+  transition: all 0.25s;
+  border-left: 3px solid transparent;
+  position: relative;
+  animation: fadeIn 0.3s ease both;
+}
+.para-item:hover { background: var(--surface2); color: var(--ink); }
+.para-item.active {
+  background: #fefce8;
+  border-left-color: var(--accent);
+  color: var(--ink);
+  box-shadow: 0 2px 12px rgba(254,240,138,0.35);
+}
+.para-item.done { color: var(--ink-xsoft); opacity: 0.6; }
+.para-num {
+  position: absolute; top: 0.85rem; right: 0.7rem;
+  font-size: 0.68rem; font-family: 'Outfit', sans-serif;
+  color: var(--ink-xsoft);
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
-        self.input1 = QLineEdit()
-        self.input1.setPlaceholderText("Start")
-        self.input1.setStyleSheet("font-size: 16px; background-color: #e0e5ec; border: 1px ; padding: 10px; border-radius: 10px; ")
-        self.layout2.addWidget(self.input1)
+/* CONTROLS PANEL */
+.controls-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1.4rem;
+  display: flex; flex-direction: column; gap: 1.3rem;
+  position: sticky; top: 80px;
+}
+.ctrl-title {
+  font-size: 0.78rem; font-weight: 500;
+  color: var(--ink-soft); letter-spacing: 0.06em; text-transform: uppercase;
+}
+.empty-controls {
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center;
+  gap: 0.6rem; padding: 2.5rem 0;
+  color: var(--ink-xsoft); text-align: center;
+}
+.empty-controls .big-icon { font-size: 2.5rem; }
+.empty-controls p { font-size: 0.85rem; font-weight: 300; }
 
-        self.input2 = QLineEdit()
-        self.input2.setPlaceholderText("End")
-        self.input2.setStyleSheet("font-size: 16px; background-color: #e0e5ec; border: 1px ; padding: 10px; border-radius: 10px; ")
-        self.layout2.addWidget(self.input2)
+/* voice select */
+.voice-select {
+  width: 100%; padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border); border-radius: 8px;
+  font-family: 'Outfit', sans-serif; font-size: 0.85rem;
+  background: var(--bg); color: var(--ink); cursor: pointer;
+}
+.voice-select:focus { outline: 2px solid var(--accent); border-color: transparent; }
 
-        self.btn = QPushButton("Select File", self)
-        self.btn.setStyleSheet("font-size: 16px; background-color: #e0e5ec; border: 1px ; padding: 10px; border-radius: 10px; ")
-        self.btn.clicked.connect(self.showDialog)
-        self.layout.addWidget(self.btn)
+/* sliders */
+.slider-group { display: flex; flex-direction: column; gap: 0.4rem; }
+.slider-label {
+  display: flex; justify-content: space-between;
+  font-size: 0.83rem; color: var(--ink-soft);
+}
+.slider-label span { font-weight: 500; color: var(--accent); min-width: 2.8rem; text-align: right; }
+input[type=range] {
+  width: 100%; -webkit-appearance: none;
+  height: 4px; border-radius: 4px;
+  background: var(--border); outline: none; cursor: pointer;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 17px; height: 17px;
+  border-radius: 50%; background: var(--accent);
+  box-shadow: 0 2px 6px var(--accent-glow);
+  transition: transform 0.15s;
+}
+input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
 
-        self.setLayout(self.layout)
-        self.setWindowTitle("Reader")
-        self.resize(400, 400)
+/* buttons */
+.playback { display: flex; gap: 0.7rem; }
+.btn-play, .btn-stop {
+  flex: 1; padding: 0.85rem; border: none; border-radius: 10px;
+  font-family: 'Outfit', sans-serif; font-size: 0.92rem; font-weight: 500;
+  cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; justify-content: center; gap: 0.4rem;
+}
+.btn-play {
+  background: var(--accent); color: #fff;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+.btn-play:hover { background: #0f4a2c; transform: translateY(-1px); }
+.btn-play:disabled { background: var(--ink-xsoft); cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-stop { background: var(--bg); color: var(--ink); border: 1px solid var(--border); }
+.btn-stop:hover { background: #fee2e2; border-color: #fca5a5; color: #dc2626; }
+.btn-stop:disabled { opacity: 0.4; cursor: not-allowed; }
 
-    def showDialog(self):
-        options = QFileDialog.Options()
-        file_path, _ = QFileDialog.getOpenFileName(self, "Select File", "", "All Files (*);;Text Files (*.txt)", options=options)
-        global page
+/* progress */
+.progress-wrap {
+  background: var(--bg); border-radius: 10px;
+  padding: 0.9rem 1rem; border: 1px solid var(--border);
+}
+.progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 0.8rem; color: var(--ink-soft); margin-bottom: 0.5rem;
+}
+.progress-bar-bg {
+  height: 5px; background: var(--border);
+  border-radius: 99px; overflow: hidden;
+}
+.progress-bar-fill {
+  height: 100%; background: var(--accent);
+  border-radius: 99px; width: 0%;
+  transition: width 0.4s ease;
+}
 
-        if file_path:
-            self.label.setText(f"Selected File: {file_path}")
-            start = self.input1.text()
-            stop = self.input2.text()
+@media (max-width: 768px) {
+  main { grid-template-columns: 1fr; padding: 1rem; }
+  .controls-panel { position: static; order: -1; }
+  .text-panel { max-height: 55vh; }
+}
+</style>
+</head>
+<body>
 
-            doc = fitz.open(f'{file_path}')
-            text = ""
-            if start == "" and stop == "":
-                for page in doc:
-                    text += page.get_text()  # Extract text from each page
+<header>
+  <div class="logo">Leitur<span>AI</span></div>
+  <div class="status-pill" id="statusPill">Aguardando PDF</div>
+</header>
 
-            elif start == "":
-                for i in range(0,int(stop)):
-                        page = doc.load_page(i)
-                        text += page.get_text()  # Extract text from each page
+<main>
+  <div class="left-col">
 
-            elif stop == "":
-                for i in range(int(start)-1,len(doc)):
-                        page = doc.load_page(i)
-                        text += page.get_text()  # Extract text from each page
-            else:
-                for i in range(int(start)-1,int(stop)):
-                        page = doc.load_page(i)
-                        text += page.get_text()  # Extract text from each page 
+    <!-- DROP ZONE -->
+    <div class="drop-zone" id="dropZone">
+      <input type="file" id="fileInput" accept=".pdf"/>
+      <div class="drop-icon">📄</div>
+      <h2>Arraste seu PDF aqui</h2>
+      <p>ou clique para selecionar o arquivo</p>
+      <label for="fileInput" class="drop-btn">Selecionar PDF</label>
+    </div>
 
+    <!-- RANGE BAR -->
+    <div class="range-bar" id="rangeBar">
+      <label>Páginas: de</label>
+      <input type="number" class="range-input" id="pageStart" min="1" value="1"/>
+      <label>até</label>
+      <input type="number" class="range-input" id="pageEnd" min="1"/>
+      <button class="btn-load" id="btnLoad">Carregar</button>
+      <span class="page-info" id="pageInfo"></span>
+    </div>
 
-            engine = pyttsx3.init()
-            engine.say(text)
-            engine.runAndWait()
-    
+    <!-- TEXT PANEL -->
+    <div class="text-panel">
+      <div class="panel-header">
+        Texto do documento
+        <span class="para-counter" id="paraCounter">— parágrafos</span>
+      </div>
+      <div class="text-content" id="textContent"></div>
+    </div>
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    ex = Reader()
-    ex.setStyleSheet("background-color: #043e7d")
-    ex.setWindowIcon(QIcon("app_icon.png"))
-    ex.show()
-    sys.exit(app.exec_())
+  </div>
+
+  <!-- CONTROLS -->
+  <div class="controls-panel">
+    <div class="ctrl-title">Controles de leitura</div>
+
+    <div id="emptyControls" class="empty-controls">
+      <div class="big-icon">🎧</div>
+      <p>Carregue um PDF para<br>começar a ouvir</p>
+    </div>
+
+    <div id="activeControls" style="display:none; flex-direction:column; gap:1.3rem;">
+
+      <div class="slider-group">
+        <div class="slider-label">Voz pt-BR</div>
+        <select class="voice-select" id="voiceSelect"></select>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Velocidade <span id="rateVal">1.0×</span></div>
+        <input type="range" id="rateSlider" min="0.5" max="2" step="0.1" value="1"/>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Volume <span id="volVal">100%</span></div>
+        <input type="range" id="volSlider" min="0" max="1" step="0.05" value="1"/>
+      </div>
+
+      <div class="playback">
+        <button class="btn-play" id="btnPlay">▶ Play</button>
+        <button class="btn-stop" id="btnStop" disabled>■ Stop</button>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-label">
+          <span>Progresso</span>
+          <span id="progressTxt">0 / 0</span>
+        </div>
+        <div class="progress-bar-bg">
+          <div class="progress-bar-fill" id="progressFill"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<script>
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  let paragraphs = [];
+  let currentIdx = -1;
+  let isPlaying  = false;
+  let isPaused   = false;
+  let totalPages = 0;
+  let voices     = [];
+  let pdfDoc     = null;
+
+  const $ = id => document.getElementById(id);
+  const dropZone    = $('dropZone');
+  const fileInput   = $('fileInput');
+  const rangeBar    = $('rangeBar');
+  const pageStart   = $('pageStart');
+  const pageEnd     = $('pageEnd');
+  const pageInfo    = $('pageInfo');
+  const btnLoad     = $('btnLoad');
+  const textContent = $('textContent');
+  const paraCounter = $('paraCounter');
+  const statusPill  = $('statusPill');
+  const emptyCtrl   = $('emptyControls');
+  const activeCtrl  = $('activeControls');
+  const voiceSelect = $('voiceSelect');
+  const rateSlider  = $('rateSlider');
+  const volSlider   = $('volSlider');
+  const rateVal     = $('rateVal');
+  const volVal      = $('volVal');
+  const btnPlay     = $('btnPlay');
+  const btnStop     = $('btnStop');
+  const progressFill= $('progressFill');
+  const progressTxt = $('progressTxt');
+
+  // ── DRAG & DROP ──
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault(); dropZone.classList.remove('drag-over');
+    const f = e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') loadPDF(f);
+  });
+  fileInput.addEventListener('change', () => { if (fileInput.files[0]) loadPDF(fileInput.files[0]); });
+
+  async function loadPDF(file) {
+    const buf = await file.arrayBuffer();
+    pdfDoc = await pdfjsLib.getDocument({ data: buf }).promise;
+    totalPages = pdfDoc.numPages;
+    pageEnd.value = totalPages;
+    pageEnd.max   = totalPages;
+    pageStart.max = totalPages;
+    pageInfo.textContent = `${totalPages} páginas no total`;
+    dropZone.style.display = 'none';
+    rangeBar.style.display = 'flex';
+    setStatus('PDF carregado', false);
+    await extractText();
+  }
+
+  btnLoad.addEventListener('click', extractText);
+
+  async function extractText() {
+    const s = Math.max(1, parseInt(pageStart.value) || 1);
+    const e = Math.min(totalPages, parseInt(pageEnd.value) || totalPages);
+    pageStart.value = s; pageEnd.value = e;
+
+    textContent.innerHTML = '';
+    paragraphs = []; currentIdx = -1;
+    stopSpeech(false);
+    setStatus('Extraindo texto…', false);
+
+    for (let p = s; p <= e; p++) {
+      const page    = await pdfDoc.getPage(p);
+      const content = await page.getTextContent();
+      const raw     = content.items.map(i => i.str).join(' ');
+      // split by multiple spaces / visual line breaks
+      raw.split(/\s{4,}/).map(t => t.trim()).filter(t => t.length > 50)
+         .forEach(t => paragraphs.push(t));
+    }
+
+    if (paragraphs.length === 0) {
+      textContent.innerHTML = '<p style="color:var(--ink-xsoft);font-style:italic;padding:1rem;">Nenhum texto encontrado neste intervalo.</p>';
+      setStatus('Sem texto', false); return;
+    }
+
+    paragraphs.forEach((txt, i) => {
+      const div = document.createElement('div');
+      div.className = 'para-item';
+      div.dataset.idx = i;
+      div.style.animationDelay = `${Math.min(i * 0.025, 0.5)}s`;
+      div.innerHTML = `<span class="para-num">${i + 1}</span>${txt}`;
+      div.addEventListener('click', () => readFrom(i));
+      textContent.appendChild(div);
+    });
+
+    paraCounter.textContent = `${paragraphs.length} parágrafos`;
+    emptyCtrl.style.display = 'none';
+    activeCtrl.style.display = 'flex';
+    updateProgress();
+    setStatus('Pronto para ler', false);
+    populateVoices();
+  }
+
+  // ── VOICES ──
+  function populateVoices() {
+    voices = speechSynthesis.getVoices();
+    const ptBR = voices.filter(v => v.lang.startsWith('pt'));
+    const list  = ptBR.length > 0 ? ptBR : voices;
+    voiceSelect.innerHTML = '';
+    list.forEach(v => {
+      const o = document.createElement('option');
+      o.value = v.name;
+      o.textContent = `${v.name} (${v.lang})`;
+      voiceSelect.appendChild(o);
+    });
+  }
+  speechSynthesis.onvoiceschanged = populateVoices;
+
+  // ── SLIDERS ──
+  rateSlider.addEventListener('input', () => { rateVal.textContent = parseFloat(rateSlider.value).toFixed(1) + '×'; });
+  volSlider.addEventListener('input',  () => { volVal.textContent  = Math.round(volSlider.value * 100) + '%'; });
+
+  // ── PLAYBACK ──
+  btnPlay.addEventListener('click', () => {
+    if (!paragraphs.length) return;
+    if (isPlaying && !isPaused) {
+      speechSynthesis.pause(); isPaused = true;
+      btnPlay.textContent = '▶ Continuar'; setStatus('Pausado', false);
+    } else if (isPaused) {
+      speechSynthesis.resume(); isPaused = false;
+      btnPlay.textContent = '⏸ Pausar'; setStatus('Lendo…', true);
+    } else {
+      readFrom(currentIdx < 0 ? 0 : currentIdx);
+    }
+  });
+  btnStop.addEventListener('click', () => stopSpeech(true));
+
+  function readFrom(idx) {
+    stopSpeech(false);
+    currentIdx = idx; isPlaying = true; isPaused = false;
+    btnPlay.textContent = '⏸ Pausar';
+    btnStop.disabled = false;
+    setStatus('Lendo…', true);
+    speakNext(idx);
+  }
+
+  function speakNext(idx) {
+    if (idx >= paragraphs.length || !isPlaying) { finishReading(); return; }
+    currentIdx = idx;
+    highlightParagraph(idx);
+    updateProgress();
+
+    const utt    = new SpeechSynthesisUtterance(paragraphs[idx]);
+    utt.rate     = parseFloat(rateSlider.value);
+    utt.volume   = parseFloat(volSlider.value);
+    utt.lang     = 'pt-BR';
+    const voice  = voices.find(v => v.name === voiceSelect.value);
+    if (voice) utt.voice = voice;
+    utt.onend    = () => { if (isPlaying && !isPaused) speakNext(idx + 1); };
+    utt.onerror  = e => { if (e.error !== 'interrupted') speakNext(idx + 1); };
+    speechSynthesis.speak(utt);
+  }
+
+  function stopSpeech(reset) {
+    speechSynthesis.cancel();
+    isPlaying = false; isPaused = false;
+    btnPlay.textContent = '▶ Play';
+    btnStop.disabled = true;
+    setStatus(paragraphs.length > 0 ? 'Pronto para ler' : 'Aguardando PDF', false);
+    if (reset) { clearHighlights(); currentIdx = -1; updateProgress(); }
+  }
+
+  function finishReading() {
+    isPlaying = false; isPaused = false;
+    btnPlay.textContent = '▶ Play'; btnStop.disabled = true;
+    setStatus('Leitura concluída ✓', false);
+    currentIdx = -1; updateProgress();
+  }
+
+  function highlightParagraph(idx) {
+    document.querySelectorAll('.para-item').forEach((el, i) => {
+      el.classList.remove('active');
+      i < idx ? el.classList.add('done') : el.classList.remove('done');
+    });
+    const active = document.querySelector(`.para-item[data-idx="${idx}"]`);
+    if (active) { active.classList.add('active'); active.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+  }
+
+  function clearHighlights() {
+    document.querySelectorAll('.para-item').forEach(el => el.classList.remove('active','done'));
+  }
+
+  function updateProgress() {
+    const total = paragraphs.length;
+    const cur   = currentIdx < 0 ? 0 : currentIdx + 1;
+    progressTxt.textContent  = `${cur} / ${total}`;
+    progressFill.style.width = total > 0 ? `${(cur/total)*100}%` : '0%';
+  }
+
+  function setStatus(text, reading) {
+    statusPill.textContent = text;
+    statusPill.className   = 'status-pill' + (reading ? ' reading' : '');
+  }
+</script>
+</body>
+</html>
