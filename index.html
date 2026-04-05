@@ -342,8 +342,13 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
       </div>
 
       <div class="slider-group">
-        <div class="slider-label">Velocidade <span id="rateVal">1.0×</span></div>
-        <input type="range" id="rateSlider" min="0.5" max="2" step="0.1" value="1"/>
+        <div class="slider-label">Velocidade <span id="rateVal">0.9×</span></div>
+        <input type="range" id="rateSlider" min="0.5" max="2" step="0.05" value="0.9"/>
+      </div>
+
+      <div class="slider-group">
+        <div class="slider-label">Tom (pitch) <span id="pitchVal">1.0</span></div>
+        <input type="range" id="pitchSlider" min="0.5" max="2" step="0.1" value="1.0"/>
       </div>
 
       <div class="slider-group">
@@ -431,6 +436,38 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
 
   btnLoad.addEventListener('click', extractText);
 
+  // ── TEXT CLEANING ──
+  function cleanText(raw) {
+    return raw
+      // Remove sequências de underscores, traços, pontos repetidos (separadores)
+      .replace(/[_\-\.]{3,}/g, ' ')
+      // Remove padrões tipo "__ _ TÍTULO __ _"
+      .replace(/_{1,}\s*_*/g, ' ')
+      // Remove números de página isolados (ex: "  10  " entre espaços)
+      .replace(/\s{2,}\d{1,3}\s{2,}/g, ' ')
+      // Remove hífen solitário entre espaços
+      .replace(/\s+-\s+/g, ' ')
+      // Remove sequências de traços com espaços (ex: "- - - -")
+      .replace(/(\s*-\s*){3,}/g, ' ')
+      // Remove caracteres não imprimíveis e controles
+      .replace(/[\x00-\x1F\x7F]/g, ' ')
+      // Colapsa múltiplos espaços em um
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  // ── VOICE QUALITY PRIORITY ──
+  // Prefere vozes premium/neural (Microsoft, Google, Apple) sobre robóticas
+  function rankVoice(v) {
+    const n = v.name.toLowerCase();
+    if (n.includes('francisca') || n.includes('antonio')) return 0; // Microsoft Neural pt-BR
+    if (n.includes('google') && v.lang.startsWith('pt'))   return 1;
+    if (n.includes('luciana') || n.includes('felipe'))     return 2; // Apple pt-BR
+    if (v.lang === 'pt-BR')  return 3;
+    if (v.lang.startsWith('pt')) return 4;
+    return 99;
+  }
+
   async function extractText() {
     const s = Math.max(1, parseInt(pageStart.value) || 1);
     const e = Math.min(totalPages, parseInt(pageEnd.value) || totalPages);
@@ -445,8 +482,8 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
       const page    = await pdfDoc.getPage(p);
       const content = await page.getTextContent();
       const raw     = content.items.map(i => i.str).join(' ');
-      // split by multiple spaces / visual line breaks
-      raw.split(/\s{4,}/).map(t => t.trim()).filter(t => t.length > 50)
+      // split by multiple spaces / visual line breaks, then clean each chunk
+      raw.split(/\s{4,}/).map(t => cleanText(t)).filter(t => t.length > 50)
          .forEach(t => paragraphs.push(t));
     }
 
@@ -476,21 +513,27 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
   // ── VOICES ──
   function populateVoices() {
     voices = speechSynthesis.getVoices();
-    const ptBR = voices.filter(v => v.lang.startsWith('pt'));
-    const list  = ptBR.length > 0 ? ptBR : voices;
+    const ptVoices = voices.filter(v => v.lang.startsWith('pt'));
+    const list = (ptVoices.length > 0 ? ptVoices : voices)
+                   .slice().sort((a, b) => rankVoice(a) - rankVoice(b));
     voiceSelect.innerHTML = '';
     list.forEach(v => {
-      const o = document.createElement('option');
-      o.value = v.name;
-      o.textContent = `${v.name} (${v.lang})`;
+      const o  = document.createElement('option');
+      o.value  = v.name;
+      const tag = rankVoice(v) <= 2 ? ' ⭐' : '';
+      o.textContent = `${v.name} (${v.lang})${tag}`;
       voiceSelect.appendChild(o);
     });
+    if (list.length > 0) voiceSelect.value = list[0].name;
   }
   speechSynthesis.onvoiceschanged = populateVoices;
 
   // ── SLIDERS ──
-  rateSlider.addEventListener('input', () => { rateVal.textContent = parseFloat(rateSlider.value).toFixed(1) + '×'; });
-  volSlider.addEventListener('input',  () => { volVal.textContent  = Math.round(volSlider.value * 100) + '%'; });
+  const pitchSlider = $('pitchSlider');
+  const pitchVal    = $('pitchVal');
+  rateSlider.addEventListener('input',  () => { rateVal.textContent  = parseFloat(rateSlider.value).toFixed(2).replace(/0$/,'') + '×'; });
+  pitchSlider.addEventListener('input', () => { pitchVal.textContent = parseFloat(pitchSlider.value).toFixed(1); });
+  volSlider.addEventListener('input',   () => { volVal.textContent   = Math.round(volSlider.value * 100) + '%'; });
 
   // ── PLAYBACK ──
   btnPlay.addEventListener('click', () => {
@@ -524,6 +567,7 @@ input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.2); }
 
     const utt    = new SpeechSynthesisUtterance(paragraphs[idx]);
     utt.rate     = parseFloat(rateSlider.value);
+    utt.pitch    = parseFloat(pitchSlider.value);
     utt.volume   = parseFloat(volSlider.value);
     utt.lang     = 'pt-BR';
     const voice  = voices.find(v => v.name === voiceSelect.value);
